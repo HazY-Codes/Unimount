@@ -1,0 +1,71 @@
+{
+  "lspd": {
+    "name": "LSPosed / Vector Data",
+    "role": "LSPosed / Vector module scope database & logs (/data/adb/lspd)",
+    "expectedModIds": [
+      "zygisk_lsposed",
+      "zygisk_lspd",
+      "riru_lsposed",
+      "zygisk_vector",
+      "vector"
+    ]
+  },
+  "zygisksu": {
+    "name": "Zygisk Next / NeoZygisk (zygisksu)",
+    "role": "Standalone Zygisk API daemon & companion sockets (/data/adb/zygisksu)",
+    "expectedModIds": [
+      "zygisksu",
+      "zygisk-next",
+      "zygisk_next",
+      "neo_zygisk"
+    ]
+  },
+  "neo_zygisk": {
+    "name": "NeoZygisk",
+    "role": "NeoZygisk runtime data & companion state (/data/adb/neo_zygisk)",
+    "expectedModIds": [
+      "neo_zygisk",
+      "zygisksu"
+    ]
+  },
+  "rezygisk": {
+    "name": "ReZygisk",
+    "role": "Open-source Zygisk implementation runtime data (/data/adb/rezygisk)",
+    "expectedModIds": [
+      "rezygisk",
+      "zygisk_rezygisk"
+    ]
+  },
+  "hybrid_mount": {
+    "name": "Hybrid Mount",
+    "role": "Hybrid Mount metamodule runtime state (/data/adb/hybrid_mount)",
+    "expectedModIds": [
+      "hybrid_mount",
+      "meta-hybrid_mount"
+    ]
+  },
+  "magic_mount": {
+    "name": "Magic Mount",
+    "role": "Magic Mount runtime state (/data/adb/magic_mount)",
+    "expectedModIds": [
+      "magic_mount",
+      "magic_mount_rs"
+    ]
+  },
+  "tricky_store": {
+    "name": "Tricky Store",
+    "role": "Keystore certificate chain & BootHash spoofing config (/data/adb/tricky_store)",
+    "expectedModIds": [
+      "tricky_store",
+      "trickystore"
+    ]
+  },
+  "teesim": {
+    "name": "TEESimulator",
+    "role": "Hardware attestation / TEE keybox simulator (/data/adb/teesim)",
+    "expectedModIds": [
+      "teesim",
+      "tee_simulator"
+    ]
+  }
+}

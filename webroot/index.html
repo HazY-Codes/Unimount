@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>UniMount Console</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Top Header & Navigation -->
+    <header class="topbar">
+      <div class="brand-row">
+        <div class="brand-title">
+          <span class="status-dot" id="bridge-dot"></span>
+          <span class="mono-title">UNIMOUNT</span>
+          <span class="version-tag">v2.4.2</span>
+        </div>
+        <div class="header-actions">
+          <button class="icon-btn" id="btn-sync-updates" title="Finalize pending modules_update" style="display:none;">
+            Sync Updates
+          </button>
+          <button class="icon-btn" id="btn-refresh" title="Rescan /data/adb">
+            Rescan
+          </button>
+        </div>
+      </div>
+
+      <nav class="nav-tabs" role="tablist">
+        <button class="nav-tab active" data-tab="modules">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+          <span>Modules</span>
+          <span class="tab-count" id="nav-mod-count">0</span>
+        </button>
+        <button class="nav-tab" data-tab="dashboard">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          <span>Telemetry</span>
+        </button>
+        <button class="nav-tab" data-tab="config">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <span>Config &amp; Hygiene</span>
+        </button>
+        <button class="nav-tab" data-tab="logs">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+          <span>Mount Log</span>
+        </button>
+      </nav>
+    </header>
+
+    <!-- Main Content Views -->
+    <main class="view-container">
+      <!-- TAB 1: MODULES -->
+      <section class="tab-panel active" id="panel-modules">
+        <div class="panel-card">
+          <div class="card-header">
+            <div>
+              <h2>Module Mount Scope &amp; Exclusions</h2>
+              <p class="subtitle">Live scan of <code>/data/adb/modules</code>, <code>modules_update</code>, and standalone <code>/data/adb</code> services. Zero mock entries.</p>
+            </div>
+          </div>
+
+          <div class="search-bar">
+            <input type="text" id="module-search" placeholder="Filter by id, name, or partition (/system, /vendor, /prism)..." autocomplete="off" />
+          </div>
+
+          <div class="filter-chips" id="filter-chips">
+            <button class="chip active" data-filter="all">All Detected</button>
+            <button class="chip" data-filter="overlay">Has Partition Overlay</button>
+            <button class="chip" data-filter="mounted">Currently Mounted</button>
+            <button class="chip" data-filter="skipped">Skipped (skip_unimount)</button>
+            <button class="chip" data-filter="standalone">Standalone (/data/adb)</button>
+          </div>
+        </div>
+
+        <div id="pending-banner" class="alert-banner" style="display:none;">
+          <div class="alert-text">
+            <strong>Pending Staging Detected:</strong> Modules in <code>/data/adb/modules_update</code> have not been merged into <code>/data/adb/modules</code> yet.
+          </div>
+          <button class="btn-primary-sm" id="btn-merge-now">Merge Now</button>
+        </div>
+
+        <div class="module-list" id="module-list">
+          <div class="empty-state">Scanning <code>/data/adb</code> via KSU root bridge...</div>
+        </div>
+      </section>
+
+      <!-- TAB 2: TELEMETRY / DASHBOARD -->
+      <section class="tab-panel" id="panel-dashboard">
+        <div class="kpi-grid">
+          <div class="kpi-box">
+            <span class="kpi-label">KSU Root Bridge</span>
+            <span class="kpi-val" id="kpi-bridge">Checking...</span>
+            <span class="kpi-sub" id="kpi-ksud">ksud: --</span>
+          </div>
+          <div class="kpi-box">
+            <span class="kpi-label">Knox / Warranty Bit</span>
+            <span class="kpi-val accent-green" id="kpi-knox">0x0</span>
+            <span class="kpi-sub" id="kpi-ro-boot">ro.boot.warranty_bit</span>
+          </div>
+          <div class="kpi-box">
+            <span class="kpi-label">SELinux State</span>
+            <span class="kpi-val" id="kpi-selinux">--</span>
+            <span class="kpi-sub">Mirrored Contexts Active</span>
+          </div>
+          <div class="kpi-box">
+            <span class="kpi-label">Active Bind Mounts</span>
+            <span class="kpi-val accent-blue" id="kpi-mounts">0</span>
+            <span class="kpi-sub" id="kpi-metamod">metamodule: --</span>
+          </div>
+        </div>
+
+        <div class="panel-card">
+          <div class="card-header">
+            <h2>Environment &amp; Mount Orchestration</h2>
+            <button class="btn-primary-sm" id="btn-run-metamount">Run metamount.sh Now</button>
+          </div>
+          <div class="kv-table" id="sys-kv-table">
+            <div class="kv-row"><span class="kv-key">Device / Build</span><span class="kv-val" id="sys-device">--</span></div>
+            <div class="kv-row"><span class="kv-key">Kernel Release</span><span class="kv-val" id="sys-kernel">--</span></div>
+            <div class="kv-row"><span class="kv-key">/data/adb Disk Usage</span><span class="kv-val" id="sys-disk">--</span></div>
+            <div class="kv-row"><span class="kv-key">Metamodule Target</span><span class="kv-val" id="sys-symlink">--</span></div>
+            <div class="kv-row"><span class="kv-key">Zygisk Provider</span><span class="kv-val" id="sys-zygisk">--</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 3: CONFIG & HYGIENE -->
+      <section class="tab-panel" id="panel-config">
+        <div class="panel-card">
+          <h2>Orchestrator Policy (<code>/data/adb/unimount/config.conf</code>)</h2>
+          <p class="subtitle">Changes write immediately to disk and apply on next mount run or soft reboot.</p>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-title">Manual Whitelist Mode (<code>MOUNT_MODE=manual</code>)</div>
+              <div class="setting-desc">Only mount modules explicitly listed in <code>/data/adb/unimount/modules.txt</code>. When off, Auto Mode mounts all overlay modules except those with <code>skip_unimount</code>.</div>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="cfg-manual-mode" />
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-title">SELinux Context Mirroring (<code>SELINUX_MIRROR=1</code>)</div>
+              <div class="setting-desc">Clones target file SELinux label (<code>system_file:s0</code>, <code>vendor_file:s0</code>) via <code>chcon</code> before bind-mounting to prevent avc denials.</div>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="cfg-selinux-mirror" checked />
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-title">Verbose Mount Telemetry (<code>LOG_VERBOSE=1</code>)</div>
+              <div class="setting-desc">Log every individual file bind-mount and SELinux context assignment to <code>/data/adb/unimount/mount.log</code>.</div>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="cfg-log-verbose" checked />
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="panel-card">
+          <div class="card-header">
+            <div>
+              <h2><code>/data/adb</code> Directory Hygiene &amp; Orphan Inspector</h2>
+              <p class="subtitle">Detects leftover directories in <code>/data/adb</code> that have no matching module in <code>/data/adb/modules</code>.</p>
+            </div>
+          </div>
+          <div id="hygiene-list" class="hygiene-list">
+            <div class="empty-state">Inspecting <code>/data/adb</code> subdirectories...</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 4: MOUNT LOG -->
+      <section class="tab-panel" id="panel-logs">
+        <div class="panel-card">
+          <div class="card-header">
+            <div>
+              <h2>Live Mount &amp; Kernel Bind Telemetry</h2>
+              <p class="subtitle">Reads <code>/data/adb/unimount/mount.log</code> and active <code>/proc/mounts</code> entries.</p>
+            </div>
+            <div class="header-actions">
+              <button class="icon-btn" id="btn-proc-mounts">Show /proc/mounts</button>
+              <button class="icon-btn" id="btn-clear-log">Clear Log</button>
+            </div>
+          </div>
+          <pre class="log-terminal" id="log-output">Loading /data/adb/unimount/mount.log...</pre>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast-box" class="toast-box"></div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

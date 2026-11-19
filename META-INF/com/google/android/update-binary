@@ -1,0 +1,22 @@
+#!/sbin/sh
+umask 022
+ui_print() { echo "$1"; }
+require_new_ksu() {
+  ui_print "**********************************"
+  ui_print " Please use KernelSU or APatch! "
+  ui_print "**********************************"
+  exit 1
+}
+OUTFD=$2
+ZIPFILE=$3
+mount /data 2>/dev/null
+[ -f /data/adb/ksud ] || [ -f /data/adb/apd ] || [ -f /data/adb/magisk/busybox ] || require_new_ksu
+MODID=$(unzip -p "$ZIPFILE" module.prop | grep "^id=" | cut -d= -f2)
+MODPATH="/data/adb/modules_update/$MODID"
+rm -rf "$MODPATH"
+mkdir -p "$MODPATH"
+unzip -o "$ZIPFILE" -x 'META-INF/*' -d "$MODPATH" >&2
+if [ -f "$MODPATH/customize.sh" ]; then
+  . "$MODPATH/customize.sh"
+fi
+exit 0

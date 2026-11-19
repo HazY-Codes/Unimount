@@ -14,7 +14,7 @@
         <div class="brand-title">
           <span class="status-dot" id="bridge-dot"></span>
           <span class="mono-title">UNIMOUNT</span>
-          <span class="version-tag">v2.4.2</span>
+          <span class="version-tag">v2.4.3</span>
         </div>
         <div class="header-actions">
           <button class="icon-btn" id="btn-sync-updates" title="Finalize pending modules_update" style="display:none;">
@@ -72,6 +72,13 @@
           </div>
         </div>
 
+        <div id="bootloop-banner" class="alert-banner" style="display:none;">
+          <div class="alert-text">
+            <strong>Bootloop Guard Triggered:</strong> Overlays were bypassed after consecutive incomplete boots. Disable the offending module, then reset the guard.
+          </div>
+          <button class="btn-primary-sm" id="btn-reset-guard">Reset Guard</button>
+        </div>
+
         <div id="pending-banner" class="alert-banner" style="display:none;">
           <div class="alert-text">
             <strong>Pending Staging Detected:</strong> Modules in <code>/data/adb/modules_update</code> have not been merged into <code>/data/adb/modules</code> yet.
@@ -100,7 +107,7 @@
           <div class="kpi-box">
             <span class="kpi-label">SELinux State</span>
             <span class="kpi-val" id="kpi-selinux">--</span>
-            <span class="kpi-sub">Mirrored Contexts Active</span>
+            <span class="kpi-sub">Fail-Closed Mirror Active</span>
           </div>
           <div class="kpi-box">
             <span class="kpi-label">Active Bind Mounts</span>
@@ -120,6 +127,7 @@
             <div class="kv-row"><span class="kv-key">/data/adb Disk Usage</span><span class="kv-val" id="sys-disk">--</span></div>
             <div class="kv-row"><span class="kv-key">Metamodule Target</span><span class="kv-val" id="sys-symlink">--</span></div>
             <div class="kv-row"><span class="kv-key">Zygisk Provider</span><span class="kv-val" id="sys-zygisk">--</span></div>
+            <div class="kv-row"><span class="kv-key">Bootloop / Safe Mode Guard</span><span class="kv-val" id="sys-guard">--</span></div>
           </div>
         </div>
       </section>
@@ -144,7 +152,7 @@
           <div class="setting-row">
             <div class="setting-info">
               <div class="setting-title">SELinux Context Mirroring (<code>SELINUX_MIRROR=1</code>)</div>
-              <div class="setting-desc">Clones target file SELinux label (<code>system_file:s0</code>, <code>vendor_file:s0</code>) via <code>chcon</code> before bind-mounting to prevent avc denials.</div>
+              <div class="setting-desc">Clones target file SELinux label (<code>u:object_r:*</code>) and POSIX permissions before bind-mounting. Fail-closed under Enforcing to prevent avc denials.</div>
             </div>
             <label class="switch">
               <input type="checkbox" id="cfg-selinux-mirror" checked />
@@ -154,8 +162,30 @@
 
           <div class="setting-row">
             <div class="setting-info">
+              <div class="setting-title">Bootloop Circuit Breaker (<code>BOOTLOOP_GUARD=1</code>)</div>
+              <div class="setting-desc">Automatically skips all overlays after 2 consecutive incomplete early boots; resets automatically via <code>boot-completed.sh</code> or manual runs after boot.</div>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="cfg-bootloop-guard" checked />
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-title">Protect Critical System Paths (<code>PROTECT_CRITICAL_PATHS=1</code>)</div>
+              <div class="setting-desc">Blocks bind-mounts over panic-critical binaries (<code>init</code>, <code>linker*</code>, <code>vold</code>, <code>*servicemanager</code>) and SELinux policy directories.</div>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="cfg-protect-critical" checked />
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
               <div class="setting-title">Verbose Mount Telemetry (<code>LOG_VERBOSE=1</code>)</div>
-              <div class="setting-desc">Log every individual file bind-mount and SELinux context assignment to <code>/data/adb/unimount/mount.log</code>.</div>
+              <div class="setting-desc">Log every individual file bind-mount, duplicate skip, and SELinux context assignment to <code>/data/adb/unimount/mount.log</code>.</div>
             </div>
             <label class="switch">
               <input type="checkbox" id="cfg-log-verbose" checked />

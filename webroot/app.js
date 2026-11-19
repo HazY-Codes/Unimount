@@ -128,9 +128,17 @@
     return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
   }
 
+  function isSafeModuleId(id) {
+    return typeof id === "string" && id.length > 0 && id !== "." && id !== ".." && /^[A-Za-z0-9._-]+$/.test(id);
+  }
+
+  function isSafeModulePath(modPath, modId) {
+    if (!isSafeModuleId(modId) || typeof modPath !== "string") return false;
+    return modPath === "/data/adb/modules/" + modId || modPath === "/data/adb/modules_update/" + modId;
+  }
+
   function isSafeOrphanDirName(name) {
-    if (typeof name !== "string" || !name || name === "." || name === "..") return false;
-    if (!/^[A-Za-z0-9._-]+$/.test(name)) return false;
+    if (!isSafeModuleId(name)) return false;
     if (Object.prototype.hasOwnProperty.call(CORE_ADB_DIRS, name)) return false;
     return true;
   }
@@ -263,10 +271,15 @@
     bundledCatalog: {},
     externalCatalog: {},
     pendingUpdates: false,
+    guardBypassed: false,
+    bootFailCount: 0,
     config: {
       MOUNT_MODE: "auto",
       SELINUX_MIRROR: "1",
-      LOG_VERBOSE: "1"
+      SKIP_ZYGISK_ONLY: "1",
+      LOG_VERBOSE: "1",
+      BOOTLOOP_GUARD: "1",
+      PROTECT_CRITICAL_PATHS: "1"
     }
   };
 
@@ -275,7 +288,19 @@
 export PATH="/data/adb/ksu/bin:/data/adb/ap/bin:/data/adb/magisk:/system/bin:$PATH"
 mkdir -p /data/adb/unimount
 [ -f /data/adb/unimount/modules.txt ] || touch /data/adb/unimount/modules.txt
-[ -f /data/adb/unimount/config.conf ] || printf "MOUNT_MODE=auto\nSELINUX_MIRROR=1\nLOG_VERBOSE=1\n" > /data/adb/unimount/config.conf
+[ -f /data/adb/unimount/config.conf ] || printf "MOUNT_MODE=auto\nSELINUX_MIRROR=1\nSKIP_ZYGISK_ONLY=1\nLOG_VERBOSE=1\nBOOTLOOP_GUARD=1\nPROTECT_CRITICAL_PATHS=1\n" > /data/adb/unimount/config.conf
+
+_boot_id=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo "")
+_last_mount_boot=$(cat /data/adb/unimount/.last_mount_boot_id 2>/dev/null || echo "")
+_bypass_boot=$(cat /data/adb/unimount/.bypass_boot_id 2>/dev/null || echo "")
+_active_count=0
+if [ -n "$_boot_id" ] && [ "$_boot_id" = "$_last_mount_boot" ] && [ -s /data/adb/unimount/active_mounts.list ]; then
+  _active_count=$(wc -l < /data/adb/unimount/active_mounts.list 2>/dev/null | tr -d ' ')
+else
+  _active_count=$(grep -c '/data/adb/modules' /proc/mounts 2>/dev/null || echo 0)
+fi
+_guard_bypassed=0
+[ -n "$_boot_id" ] && [ "$_bypass_boot" = "$_boot_id" ] && _guard_bypassed=1
 
 echo "===SYS==="
 echo "MODEL=$(getprop ro.product.model) ($(getprop ro.build.display.id))"
@@ -286,7 +311,10 @@ echo "VBKNOX=$(getprop ro.warranty_bit 2>/dev/null || echo 0)"
 echo "DISK=$(df -h /data/adb 2>/dev/null | tail -n 1 | awk '{print $3 " / " $2 " (" $5 ")"}')"
 echo "METAMOD=$(readlink /data/adb/metamodule 2>/dev/null || echo 'None')"
 echo "KSUD=$(/data/adb/ksud --version 2>/dev/null || echo 'Present')"
-echo "BINDCOUNT=$(grep -c '/data/adb/modules' /proc/mounts 2>/dev/null || echo 0)"
+echo "BINDCOUNT=$_active_count"
+echo "BOOTFAIL=$(cat /data/adb/unimount/.boot_fail_count 2>/dev/null || echo 0)"
+echo "GUARDBYPASSED=$_guard_bypassed"
+echo "SAFEMODE=$(getprop persist.sys.safemode 2>/dev/null || echo 0)"
 
 echo "===CONFIG==="
 cat /data/adb/unimount/config.conf 2>/dev/null
@@ -314,7 +342,7 @@ for base in /data/adb/modules /data/adb/modules_update; do
     [ -f "$d/remove" ] && echo "__REMOVE=1"
     [ -f "$d/skip_mount" ] && echo "__SKIP_MOUNT=1"
     [ -f "$d/skip_unimount" ] && echo "__SKIP_UNIMOUNT=1"
-    if grep -q "$d" /proc/mounts 2>/dev/null; then
+    if ([ -n "$_boot_id" ] && [ "$_boot_id" = "$_last_mount_boot" ] && grep -Fq "$mod_id|" /data/adb/unimount/active_mounts.list 2>/dev/null) || grep -Fq "$d" /proc/mounts 2>/dev/null; then
       echo "__MOUNTED=1"
     fi
   done
@@ -355,12 +383,21 @@ done
     }
 
     // 2. Parse Config
-    const cfg = { MOUNT_MODE: "auto", SELINUX_MIRROR: "1", LOG_VERBOSE: "1" };
+    const cfg = {
+      MOUNT_MODE: "auto",
+      SELINUX_MIRROR: "1",
+      SKIP_ZYGISK_ONLY: "1",
+      LOG_VERBOSE: "1",
+      BOOTLOOP_GUARD: "1",
+      PROTECT_CRITICAL_PATHS: "1"
+    };
     for (const l of (sections.CONFIG || [])) {
       const idx = l.indexOf("=");
       if (idx > 0) cfg[l.slice(0, idx).trim()] = l.slice(idx + 1).trim();
     }
     state.config = cfg;
+    state.bootFailCount = parseInt(sys.BOOTFAIL || "0", 10) || 0;
+    state.guardBypassed = sys.GUARDBYPASSED === "1" || state.bootFailCount >= 2;
 
     // 3. Parse Whitelist & Optional User Directory Catalog
     const whitelist = new Set(
@@ -497,6 +534,16 @@ done
     document.getElementById("sys-symlink").textContent = sys.METAMOD || "--";
     document.getElementById("sys-zygisk").textContent = detectZygiskProvider(state.modules, state.adbDirs);
 
+    let guardLabel = state.config.BOOTLOOP_GUARD === "0"
+      ? "Disabled"
+      : ("Armed (" + state.bootFailCount + "/2 fails)");
+    if (sys.SAFEMODE === "1") guardLabel = "Safe Mode Bypass Active";
+    else if (state.guardBypassed) guardLabel = "Bypassed (" + state.bootFailCount + " fails) — Reset Needed";
+    document.getElementById("sys-guard").textContent = guardLabel;
+
+    const guardBanner = document.getElementById("bootloop-banner");
+    guardBanner.style.display = state.guardBypassed ? "flex" : "none";
+
     const syncBtn = document.getElementById("btn-sync-updates");
     const banner = document.getElementById("pending-banner");
     if (state.pendingUpdates) {
@@ -511,6 +558,8 @@ done
   function updateConfigUI() {
     document.getElementById("cfg-manual-mode").checked = state.config.MOUNT_MODE === "manual";
     document.getElementById("cfg-selinux-mirror").checked = state.config.SELINUX_MIRROR !== "0";
+    document.getElementById("cfg-bootloop-guard").checked = state.config.BOOTLOOP_GUARD !== "0";
+    document.getElementById("cfg-protect-critical").checked = state.config.PROTECT_CRITICAL_PATHS !== "0";
     document.getElementById("cfg-log-verbose").checked = state.config.LOG_VERBOSE !== "0";
   }
 
@@ -690,9 +739,12 @@ done
   async function saveConfig() {
     const mode = document.getElementById("cfg-manual-mode").checked ? "manual" : "auto";
     const selinux = document.getElementById("cfg-selinux-mirror").checked ? "1" : "0";
+    const skipZygisk = state.config.SKIP_ZYGISK_ONLY === "0" ? "0" : "1";
     const verbose = document.getElementById("cfg-log-verbose").checked ? "1" : "0";
+    const guard = document.getElementById("cfg-bootloop-guard").checked ? "1" : "0";
+    const critical = document.getElementById("cfg-protect-critical").checked ? "1" : "0";
 
-    const cmd = `mkdir -p /data/adb/unimount && printf "MOUNT_MODE=${mode}\nSELINUX_MIRROR=${selinux}\nLOG_VERBOSE=${verbose}\n" > /data/adb/unimount/config.conf`;
+    const cmd = `mkdir -p /data/adb/unimount && printf "MOUNT_MODE=${mode}\nSELINUX_MIRROR=${selinux}\nSKIP_ZYGISK_ONLY=${skipZygisk}\nLOG_VERBOSE=${verbose}\nBOOTLOOP_GUARD=${guard}\nPROTECT_CRITICAL_PATHS=${critical}\n" > /data/adb/unimount/config.conf`;
     await ksuExec(cmd);
     showToast("Saved /data/adb/unimount/config.conf");
     await refreshAll();
@@ -748,6 +800,13 @@ done
       await refreshAll();
     });
 
+    // Reset Bootloop Guard Button
+    document.getElementById("btn-reset-guard").addEventListener("click", async () => {
+      await ksuExec("echo 0 > /data/adb/unimount/.boot_fail_count && rm -f /data/adb/unimount/.bypass_boot_id");
+      showToast("Bootloop guard counter reset");
+      await refreshAll();
+    });
+
     // Merge modules_update into modules
     const mergeUpdates = async () => {
       const cmd = `
@@ -775,11 +834,11 @@ done
     });
 
     // Config switches
-    ["cfg-manual-mode", "cfg-selinux-mirror", "cfg-log-verbose"].forEach((id) => {
+    ["cfg-manual-mode", "cfg-selinux-mirror", "cfg-bootloop-guard", "cfg-protect-critical", "cfg-log-verbose"].forEach((id) => {
       document.getElementById(id).addEventListener("change", saveConfig);
     });
 
-    // Delegated clicks for Module Toggles
+    // Delegated clicks for Module Toggles (with strict ID & path validation)
     document.body.addEventListener("change", async (e) => {
       const t = e.target;
       if (!t || !t.dataset || !t.dataset.action) return;
@@ -788,15 +847,24 @@ done
       const modId = t.dataset.id;
       const modPath = t.dataset.path;
 
+      if (!isSafeModuleId(modId)) {
+        showToast("Blocked invalid module ID");
+        return;
+      }
+
       if (action === "whitelist") {
         if (t.checked) {
-          await ksuExec(`grep -qx "${modId}" /data/adb/unimount/modules.txt 2>/dev/null || echo "${modId}" >> /data/adb/unimount/modules.txt`);
+          await ksuExec(`grep -Fxq "${modId}" /data/adb/unimount/modules.txt 2>/dev/null || echo "${modId}" >> /data/adb/unimount/modules.txt`);
           showToast(`Added ${modId} to modules.txt`);
         } else {
-          await ksuExec(`sed -i '/^${modId}$/d' /data/adb/unimount/modules.txt`);
+          await ksuExec(`grep -Fxv "${modId}" /data/adb/unimount/modules.txt > /data/adb/unimount/.modules.tmp 2>/dev/null || true; mv /data/adb/unimount/.modules.tmp /data/adb/unimount/modules.txt`);
           showToast(`Removed ${modId} from modules.txt`);
         }
       } else if (action === "skip_unimount") {
+        if (!isSafeModulePath(modPath, modId)) {
+          showToast("Blocked invalid module path");
+          return;
+        }
         if (t.checked) {
           await ksuExec(`touch "${modPath}/skip_unimount"`);
           showToast(`Created skip_unimount for ${modId}`);
@@ -805,6 +873,10 @@ done
           showToast(`Removed skip_unimount for ${modId}`);
         }
       } else if (action === "skip_mount") {
+        if (!isSafeModulePath(modPath, modId)) {
+          showToast("Blocked invalid module path");
+          return;
+        }
         if (t.checked) {
           await ksuExec(`touch "${modPath}/skip_mount"`);
           showToast(`Created skip_mount for ${modId}`);

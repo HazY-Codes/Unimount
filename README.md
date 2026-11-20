@@ -1,9 +1,34 @@
-## UniMount
-(`v2.4.3`) is a Knox `0x0`-safe, soft-reboot friendly KernelSU metamodule based on NanoMount, built specifically for use with UniRoot (and compatible temporary/systemless root setups). Inspired in name by Kuuky, it manages systemless partition overlays, SELinux security context mirroring, bootloop/conflict safeguards, and Zygisk-only module handling without touching physical partitions.
+# UniMount - KernelSU Metamodule
+
+<div align="center">
+
+<img src="./assets/banner.svg" alt="UniMount - KernelSU Metamodule" width="600" />
+
+<br/>
+
+![Compatible with](https://img.shields.io/badge/Compatible%20with-KernelSU%20%7C%20KernelSU--Next%20%7C%20UniRoot%20%7C%20APatch-0369A1?style=flat&labelColor=1E2636)
+
+[![Latest Release](https://img.shields.io/github/v/release/HazY-Codes/Unimount?label=Latest%20Release&logo=git&logoColor=white&color=15803D&labelColor=1E2636&style=flat)](https://github.com/HazY-Codes/Unimount/releases/latest)
+[![Total Commits](https://img.shields.io/github/commit-activity/t/HazY-Codes/Unimount?label=Total%20Commits&logo=git&logoColor=white&color=15803D&labelColor=1E2636&style=flat)](https://github.com/HazY-Codes/Unimount/commits)
+
+[![Last Commit](https://img.shields.io/github/last-commit/HazY-Codes/Unimount?label=Last%20Commit&logo=git&logoColor=white&color=15803D&labelColor=1E2636&style=flat)](https://github.com/HazY-Codes/Unimount/commits)
+[![Total Downloads](https://img.shields.io/github/downloads/HazY-Codes/Unimount/total?label=Total%20Downloads&logo=github&logoColor=white&color=15803D&labelColor=1E2636&style=flat)](https://github.com/HazY-Codes/Unimount/releases)
+
+<br/>
+
+<img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=600&size=15&duration=3200&pause=1000&color=38BDF8&center=true&vCenter=true&width=520&height=30&lines=Knox+0x0+Safe+Systemless+Overlay+Engine;Soft-Reboot+Friendly+KernelSU+Metamodule;SELinux-Mirrored+%26+Bootloop+Guarded" alt="UniMount Tagline" />
+
+</div>
 
 ---
 
-## Features
+## 📖 About
+
+**UniMount** (`v2.4.4`) is a Knox `0x0`-safe, soft-reboot friendly KernelSU metamodule based on **NanoMount**, built specifically for use with **UniRoot** (and compatible temporary or systemless root setups). Inspired in name by **Kuuky**, it manages systemless partition overlays, SELinux security context mirroring, bootloop/conflict safeguards, and Zygisk-only module handling without touching physical partitions.
+
+---
+
+## ✨ Features
 
 - **Built for UniRoot & Soft Reboots:** Engineered specifically for Lateload environments, retaining clean, reliable bind-mount behavior across soft reboots without requiring full hardware reboots or risking Knox `0x0` warranty status.
 - **Metamodule Conflict & Bootloop Safeguards:**
@@ -19,12 +44,13 @@
 
 ---
 
-## Directory Structure
+## 📁 Directory Structure
 
 ```text
 /data/adb/
 ├── metamodule -> /data/adb/modules/unimount  # Active metamodule symlink
 ├── modules/unimount/
+│   ├── assets/banner.svg                     # README hero banner
 │   ├── customize.sh                          # Conflict-guarded installer & residue cleanup
 │   ├── metamount.sh                          # Hardened overlay, SELinux & stale-mount engine
 │   ├── post-fs-data.sh                       # Early boot lock cleanup & config initialization
@@ -46,14 +72,20 @@
     └── mirror/                               # Mirror workspace directory
 ```
 
-## Installation
-- Uninstall any other active KernelSU metamodule first (UniMount's installer aborts automatically if another active `metamodule=1` package is detected).
-- Download the UniMount module ZIP archive.
-- Open KernelSU Manager (within your UniRoot environment).
-- Navigate to **Modules -> Install from storage** and select the ZIP file.
-- Perform a soft reboot (or full reboot). During installation, UniMount links `/data/adb/metamodule` to `/data/adb/modules/unimount` if no active metamodule exists.
+---
 
-## Configuration
+## 🚀 Installation
+
+1. Uninstall any other active KernelSU metamodule first (UniMount's installer aborts automatically if another active `metamodule=1` package is detected).
+2. Download the latest UniMount module ZIP archive from [Releases](https://github.com/HazY-Codes/Unimount/releases/latest).
+3. Open **KernelSU Manager** (within your UniRoot environment).
+4. Navigate to **Modules -> Install from storage** and select the ZIP file.
+5. Perform a **soft reboot** (or full reboot). During installation, UniMount links `/data/adb/metamodule` to `/data/adb/modules/unimount` if no active metamodule exists.
+
+---
+
+## ⚙️ Configuration
+
 Runtime settings are stored in `/data/adb/unimount/config.conf` and can be edited via the WebUI or a root shell:
 
 | Variable | Default | Description |
@@ -65,18 +97,34 @@ Runtime settings are stored in `/data/adb/unimount/config.conf` and can be edite
 | `BOOTLOOP_GUARD` | `1` | Automatically bypasses all overlays after 2 consecutive incomplete early boots; resets via `boot-completed.sh` or WebUI. |
 | `PROTECT_CRITICAL_PATHS` | `1` | Blocks bind-mounts over panic-critical binaries (`init`, `linker*`, `vold`, `*servicemanager`) and SELinux policy directories. |
 
-## Skipping Individual Modules
-To prevent UniMount from mounting a specific module in auto mode without disabling the module itself, place an empty file named `skip_unimount` (or `skip_mount`) inside `/data/adb/modules/<module_id>/`.
+---
 
-## Usage & WebUI
+## 🛡️ Skipping Individual Modules
+
+To prevent UniMount from mounting a specific module in auto mode without disabling the module itself, create an empty `skip_unimount` (or `skip_mount`) file inside `/data/adb/modules/<module_id>/`:
+
+```shell
+touch /data/adb/modules/<module_id>/skip_unimount
+```
+
+---
+
+## 🖥️ Usage & WebUI
+
 - **WebUI Management:** Open **KernelSU Manager -> Modules -> UniMount** to launch the WebUI dashboard for toggling mount modes, bootloop guard settings, editing `modules.txt`, inspecting `/data/adb` hygiene, and viewing live mount logs.
 - **Custom Directory Catalog Overrides:** Add custom `/data/adb/<dir>` metadata entries in `/data/adb/unimount/known_dirs.json` to override or extend the bundled `webroot/known_dirs.json` without editing `app.js`.
 - **Logs:** Inspect `/data/adb/unimount/mount.log` to verify bind-mount targets, applied SELinux contexts, blocked paths, and unmounted stale binds.
 
-## Credits & Acknowledgments
+---
+
+## 🙏 Credits & Acknowledgments
+
 - **NanoMount:** Core architectural foundation and lightweight systemless mounting approach.
 - **Kuuky:** Creator of UniRoot and inspiration behind the UniMount name.
 - **UniRoot:** Primary target environment for temporary, Knox `0x0`-safe, soft-reboot root workflows.
 
-## Uninstallation
+---
+
+## 🗑️ Uninstallation
+
 Remove UniMount from KernelSU Manager and soft-reboot. The `uninstall.sh` script automatically cleans up `/data/adb/metamodule` if it points to UniMount.

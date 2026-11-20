@@ -1,7 +1,7 @@
 id=unimount
 name=UniMount Metamodule
-version=v2.4.3
-versionCode=243
+version=v2.4.4
+versionCode=244
 author=HazY-Codes
 description=SELinux-mirrored mount orchestrator & KSU WebUI for UniRoot / KernelSU-Next (Knox 0x0 safe)
 metamodule=1

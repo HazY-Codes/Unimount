@@ -64,7 +64,7 @@ PREV_MOUNT_BOOT_ID=$(cat "$CONF_DIR/.last_mount_boot_id" 2>/dev/null || echo "")
 BOOT_COMPLETED=$(getprop sys.boot_completed 2>/dev/null || echo "0")
 SELINUX_STATE=$(getenforce 2>/dev/null || echo "Enforcing")
 
-echo "=== UniMount v2.4.3 Run: $(date '+%Y-%m-%d %H:%M:%S') ===" > "$LOG_FILE"
+echo "=== UniMount v2.4.4 Run: $(date '+%Y-%m-%d %H:%M:%S') ===" > "$LOG_FILE"
 echo "[INFO] Mode: $MOUNT_MODE | SELinux: $SELINUX_STATE (Mirror: $SELINUX_MIRROR) | Guard: $BOOTLOOP_GUARD | CriticalProtect: $PROTECT_CRITICAL_PATHS" >> "$LOG_FILE"
 
 # Safe Mode bypass (Android Safe Mode or KernelSU safe-mode marker)

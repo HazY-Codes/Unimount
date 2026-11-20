@@ -10,7 +10,7 @@ abort_install() {
   fi
 }
 
-ui_print "- Installing UniMount v2.4.3 (Knox 0x0 Safe)"
+ui_print "- Installing UniMount v2.4.4 (Knox 0x0 Safe)"
 
 # 1. Defensive single-metamodule conflict guard (covers custom/older ksud & UniRoot)
 if [ -L /data/adb/metamodule ] || [ -e /data/adb/metamodule ]; then
@@ -58,7 +58,7 @@ BOOTLOOP_GUARD=1
 PROTECT_CRITICAL_PATHS=1
 EOF
 else
-  # Preserve user settings while appending newly introduced v2.4.3 defaults
+  # Preserve user settings while appending newly introduced v2.4.4 defaults
   grep -Eq '^[[:space:]]*SKIP_ZYGISK_ONLY=' /data/adb/unimount/config.conf 2>/dev/null || echo "SKIP_ZYGISK_ONLY=1" >> /data/adb/unimount/config.conf
   grep -Eq '^[[:space:]]*BOOTLOOP_GUARD=' /data/adb/unimount/config.conf 2>/dev/null || echo "BOOTLOOP_GUARD=1" >> /data/adb/unimount/config.conf
   grep -Eq '^[[:space:]]*PROTECT_CRITICAL_PATHS=' /data/adb/unimount/config.conf 2>/dev/null || echo "PROTECT_CRITICAL_PATHS=1" >> /data/adb/unimount/config.conf

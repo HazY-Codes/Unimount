@@ -1,4 +1,6 @@
 #!/system/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+export PATH="/data/adb/ksu/bin:/data/adb/ap/bin:/data/adb/magisk:/system/bin:/vendor/bin:$PATH"
 MODDIR=${0%/*}
 CONF_DIR="/data/adb/unimount"
 LOCK_DIR="$CONF_DIR/.lock"
@@ -17,6 +19,7 @@ if [ ! -f "$CONF_DIR/config.conf" ]; then
   cat << 'EOF' > "$CONF_DIR/config.conf"
 MOUNT_MODE=auto
 SELINUX_MIRROR=1
+DIR_MIRROR_INJECT=1
 SKIP_ZYGISK_ONLY=1
 LOG_VERBOSE=1
 BOOTLOOP_GUARD=1

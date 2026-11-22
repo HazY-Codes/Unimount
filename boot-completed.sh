@@ -1,4 +1,6 @@
 #!/system/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+export PATH="/data/adb/ksu/bin:/data/adb/ap/bin:/data/adb/magisk:/system/bin:/vendor/bin:$PATH"
 MODDIR=${0%/*}
 CONF_DIR="/data/adb/unimount"
 LOG_FILE="$CONF_DIR/mount.log"

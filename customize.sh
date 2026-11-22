@@ -1,4 +1,6 @@
 #!/system/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+export PATH="/data/adb/ksu/bin:/data/adb/ap/bin:/data/adb/magisk:/system/bin:/vendor/bin:$PATH"
 SKIPUNZIP=0
 
 abort_install() {
@@ -10,7 +12,7 @@ abort_install() {
   fi
 }
 
-ui_print "- Installing UniMount v2.4.4 (Knox 0x0 Safe)"
+ui_print "- Installing UniMount v2.5.0 (Knox 0x0 Safe)"
 
 # 1. Defensive single-metamodule conflict guard (covers custom/older ksud & UniRoot)
 if [ -L /data/adb/metamodule ] || [ -e /data/adb/metamodule ]; then
@@ -52,13 +54,15 @@ if [ ! -f /data/adb/unimount/config.conf ]; then
   cat << 'EOF' > /data/adb/unimount/config.conf
 MOUNT_MODE=auto
 SELINUX_MIRROR=1
+DIR_MIRROR_INJECT=1
 SKIP_ZYGISK_ONLY=1
 LOG_VERBOSE=1
 BOOTLOOP_GUARD=1
 PROTECT_CRITICAL_PATHS=1
 EOF
 else
-  # Preserve user settings while appending newly introduced v2.4.4 defaults
+  # Preserve user settings while appending newly introduced v2.5.0 defaults
+  grep -Eq '^[[:space:]]*DIR_MIRROR_INJECT=' /data/adb/unimount/config.conf 2>/dev/null || echo "DIR_MIRROR_INJECT=1" >> /data/adb/unimount/config.conf
   grep -Eq '^[[:space:]]*SKIP_ZYGISK_ONLY=' /data/adb/unimount/config.conf 2>/dev/null || echo "SKIP_ZYGISK_ONLY=1" >> /data/adb/unimount/config.conf
   grep -Eq '^[[:space:]]*BOOTLOOP_GUARD=' /data/adb/unimount/config.conf 2>/dev/null || echo "BOOTLOOP_GUARD=1" >> /data/adb/unimount/config.conf
   grep -Eq '^[[:space:]]*PROTECT_CRITICAL_PATHS=' /data/adb/unimount/config.conf 2>/dev/null || echo "PROTECT_CRITICAL_PATHS=1" >> /data/adb/unimount/config.conf

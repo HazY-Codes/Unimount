@@ -1,10 +1,12 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 (function () {
   "use strict";
 
   let cbSeq = 0;
 
   // Dual-mode KernelSU Root Shell Bridge (supports 3-arg callback, 2-arg callback, and sync return)
-  function ksuExec(command) {
+  function ksuExec(command, timeoutMs) {
+    const limit = typeof timeoutMs === "number" && timeoutMs > 0 ? timeoutMs : 8000;
     return new Promise((resolve) => {
       if (typeof window.ksu === "undefined" || typeof window.ksu.exec !== "function") {
         resolve({ errno: 127, stdout: "", stderr: "window.ksu bridge not detected" });
@@ -55,10 +57,11 @@
           delete window[cbName];
           resolve({ errno: 124, stdout: "", stderr: "ksu.exec timed out" });
         }
-      }, 6000);
+      }, limit);
     });
   }
 
+  let toastTimer = null;
   function showToast(msg) {
     if (typeof window.ksu !== "undefined" && typeof window.ksu.toast === "function") {
       try { window.ksu.toast(msg); return; } catch (e) {}
@@ -67,7 +70,8 @@
     if (!box) return;
     box.textContent = msg;
     box.classList.add("show");
-    setTimeout(() => box.classList.remove("show"), 2400);
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => box.classList.remove("show"), 2600);
   }
 
   // Core root-manager and UniMount directories (never flagged as orphans)
@@ -266,7 +270,11 @@
     bridgeOnline: false,
     filter: "all",
     search: "",
+    mountSearch: "",
+    logView: "mountlog",
     modules: [],
+    activeMounts: [],
+    ledgerSource: "none",
     adbDirs: [],
     bundledCatalog: {},
     externalCatalog: {},
@@ -276,6 +284,7 @@
     config: {
       MOUNT_MODE: "auto",
       SELINUX_MIRROR: "1",
+      DIR_MIRROR_INJECT: "1",
       SKIP_ZYGISK_ONLY: "1",
       LOG_VERBOSE: "1",
       BOOTLOOP_GUARD: "1",
@@ -285,20 +294,35 @@
 
   // Single-pass shell scanner to gather accurate live filesystem telemetry
   const SCAN_SCRIPT = `
-export PATH="/data/adb/ksu/bin:/data/adb/ap/bin:/data/adb/magisk:/system/bin:$PATH"
+export PATH="/data/adb/ksu/bin:/data/adb/ap/bin:/data/adb/magisk:/system/bin:/vendor/bin:$PATH"
 mkdir -p /data/adb/unimount
 [ -f /data/adb/unimount/modules.txt ] || touch /data/adb/unimount/modules.txt
-[ -f /data/adb/unimount/config.conf ] || printf "MOUNT_MODE=auto\nSELINUX_MIRROR=1\nSKIP_ZYGISK_ONLY=1\nLOG_VERBOSE=1\nBOOTLOOP_GUARD=1\nPROTECT_CRITICAL_PATHS=1\n" > /data/adb/unimount/config.conf
+[ -f /data/adb/unimount/config.conf ] || printf "MOUNT_MODE=auto\nSELINUX_MIRROR=1\nDIR_MIRROR_INJECT=1\nSKIP_ZYGISK_ONLY=1\nLOG_VERBOSE=1\nBOOTLOOP_GUARD=1\nPROTECT_CRITICAL_PATHS=1\n" > /data/adb/unimount/config.conf
 
 _boot_id=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo "")
 _last_mount_boot=$(cat /data/adb/unimount/.last_mount_boot_id 2>/dev/null || echo "")
 _bypass_boot=$(cat /data/adb/unimount/.bypass_boot_id 2>/dev/null || echo "")
-_active_count=0
-if [ -n "$_boot_id" ] && [ "$_boot_id" = "$_last_mount_boot" ] && [ -s /data/adb/unimount/active_mounts.list ]; then
-  _active_count=$(wc -l < /data/adb/unimount/active_mounts.list 2>/dev/null | tr -d ' ')
-else
-  _active_count=$(grep -c '/data/adb/modules' /proc/mounts 2>/dev/null || echo 0)
+
+_ledger_file=""
+_ledger_src="none"
+if [ -r /dev/unimount_active_mounts ]; then
+  _ledger_file="/dev/unimount_active_mounts"
+  _ledger_src="/dev/unimount_active_mounts"
+elif [ -n "$_boot_id" ] && [ "$_boot_id" = "$_last_mount_boot" ] && [ -r /data/adb/unimount/active_mounts.list ]; then
+  _ledger_file="/data/adb/unimount/active_mounts.list"
+  _ledger_src="active_mounts.list"
 fi
+
+_active_count=0
+_mirror_count=0
+if [ -n "$_ledger_file" ] && [ -s "$_ledger_file" ]; then
+  _active_count=$(wc -l < "$_ledger_file" 2>/dev/null | tr -d ' ')
+  _mirror_count=$(grep -c '|DIR_MIRROR$' "$_ledger_file" 2>/dev/null || echo 0)
+else
+  _active_count=$(grep -Ec '/data/adb/modules/|/data/adb/unimount/mirror/merged' /proc/mounts 2>/dev/null || echo 0)
+  _mirror_count=$(grep -c '/data/adb/unimount/mirror/merged' /proc/mounts 2>/dev/null || echo 0)
+fi
+
 _guard_bypassed=0
 [ -n "$_boot_id" ] && [ "$_bypass_boot" = "$_boot_id" ] && _guard_bypassed=1
 
@@ -312,9 +336,14 @@ echo "DISK=$(df -h /data/adb 2>/dev/null | tail -n 1 | awk '{print $3 " / " $2 "
 echo "METAMOD=$(readlink /data/adb/metamodule 2>/dev/null || echo 'None')"
 echo "KSUD=$(/data/adb/ksud --version 2>/dev/null || echo 'Present')"
 echo "BINDCOUNT=$_active_count"
+echo "MIRRORCOUNT=$_mirror_count"
+echo "LEDGERSRC=$_ledger_src"
 echo "BOOTFAIL=$(cat /data/adb/unimount/.boot_fail_count 2>/dev/null || echo 0)"
 echo "GUARDBYPASSED=$_guard_bypassed"
 echo "SAFEMODE=$(getprop persist.sys.safemode 2>/dev/null || echo 0)"
+
+echo "===ACTIVE_MOUNTS==="
+[ -n "$_ledger_file" ] && [ -s "$_ledger_file" ] && cat "$_ledger_file" 2>/dev/null
 
 echo "===CONFIG==="
 cat /data/adb/unimount/config.conf 2>/dev/null
@@ -342,7 +371,7 @@ for base in /data/adb/modules /data/adb/modules_update; do
     [ -f "$d/remove" ] && echo "__REMOVE=1"
     [ -f "$d/skip_mount" ] && echo "__SKIP_MOUNT=1"
     [ -f "$d/skip_unimount" ] && echo "__SKIP_UNIMOUNT=1"
-    if ([ -n "$_boot_id" ] && [ "$_boot_id" = "$_last_mount_boot" ] && grep -Fq "$mod_id|" /data/adb/unimount/active_mounts.list 2>/dev/null) || grep -Fq "$d" /proc/mounts 2>/dev/null; then
+    if ([ -n "$_ledger_file" ] && [ -s "$_ledger_file" ] && awk -F'|' -v m="$mod_id" 'index("," $1 ",", "," m ",") > 0 { found=1; exit } END { exit !found }' "$_ledger_file" 2>/dev/null) || grep -Fq "$d/" /proc/mounts 2>/dev/null; then
       echo "__MOUNTED=1"
     fi
   done
@@ -381,11 +410,36 @@ done
       const idx = l.indexOf("=");
       if (idx > 0) sys[l.slice(0, idx)] = l.slice(idx + 1).trim();
     }
+    state.ledgerSource = sys.LEDGERSRC || "none";
 
-    // 2. Parse Config
+    // 2. Parse Active Mounts Ledger
+    const activeMounts = [];
+    const perModMounts = new Map();
+    for (const l of (sections.ACTIVE_MOUNTS || [])) {
+      const trimmed = l.trim();
+      if (!trimmed) continue;
+      const parts = trimmed.split("|");
+      if (parts.length < 2) continue;
+      const modsRaw = parts[0] || "";
+      const dst = parts[1] || "";
+      const src = parts[2] || "";
+      const type = parts[3] || (src.includes("/unimount/mirror/") ? "DIR_MIRROR" : "FILE_BIND");
+      const mods = modsRaw.split(",").map((x) => x.trim()).filter(Boolean);
+      activeMounts.push({ modsRaw, mods, dst, src, type });
+      for (const mId of mods) {
+        const cur = perModMounts.get(mId) || { binds: 0, mirrors: 0 };
+        if (type === "DIR_MIRROR") cur.mirrors += 1;
+        else cur.binds += 1;
+        perModMounts.set(mId, cur);
+      }
+    }
+    state.activeMounts = activeMounts;
+
+    // 3. Parse Config
     const cfg = {
       MOUNT_MODE: "auto",
       SELINUX_MIRROR: "1",
+      DIR_MIRROR_INJECT: "1",
       SKIP_ZYGISK_ONLY: "1",
       LOG_VERBOSE: "1",
       BOOTLOOP_GUARD: "1",
@@ -399,14 +453,14 @@ done
     state.bootFailCount = parseInt(sys.BOOTFAIL || "0", 10) || 0;
     state.guardBypassed = sys.GUARDBYPASSED === "1" || state.bootFailCount >= 2;
 
-    // 3. Parse Whitelist & Optional User Directory Catalog
+    // 4. Parse Whitelist & Optional User Directory Catalog
     const whitelist = new Set(
       (sections.WHITELIST || []).map((x) => x.trim()).filter(Boolean)
     );
     const userCatalog = parseJsonObject((sections.USER_CATALOG || []).join("\n"));
     state.externalCatalog = Object.assign({}, state.bundledCatalog, userCatalog);
 
-    // 4. Parse Modules from /data/adb/modules and /data/adb/modules_update
+    // 5. Parse Modules from /data/adb/modules and /data/adb/modules_update
     const modMap = new Map();
     let curMod = null;
     let hasUpdatePending = false;
@@ -419,6 +473,7 @@ done
         const isUpdate = baseDir.endsWith("modules_update");
         if (isUpdate) hasUpdatePending = true;
 
+        const mStats = perModMounts.get(modId) || { binds: 0, mirrors: 0 };
         curMod = modMap.get(modId) || {
           id: modId,
           name: modId,
@@ -432,7 +487,9 @@ done
           remove: false,
           skipMount: false,
           skipUnimount: false,
-          mounted: false,
+          mounted: mStats.binds > 0 || mStats.mirrors > 0,
+          mountBinds: mStats.binds,
+          mountMirrors: mStats.mirrors,
           whitelisted: whitelist.has(modId),
           sourceType: "module"
         };
@@ -460,7 +517,7 @@ done
       }
     }
 
-    // 5. Parse /data/adb directories & dynamically resolve against installed modules
+    // 6. Parse /data/adb directories & dynamically resolve against installed modules
     const installedModulesList = Array.from(modMap.values());
     const adbDirs = [];
     for (const l of (sections.ADB_DIRS || [])) {
@@ -488,6 +545,8 @@ done
           skipMount: false,
           skipUnimount: false,
           mounted: false,
+          mountBinds: 0,
+          mountMirrors: 0,
           whitelisted: whitelist.has(name),
           sourceType: "standalone",
           isOrphanCandidate: Boolean(meta.isOrphan)
@@ -505,6 +564,7 @@ done
     updateDashboardUI(sys);
     updateConfigUI();
     renderModules();
+    renderActiveMounts();
     renderHygiene();
   }
 
@@ -518,14 +578,14 @@ done
     } else {
       dot.className = "status-dot offline";
       kpiBridge.textContent = "Bridge Offline";
-      kpiBridge.className = "kpi-val";
+      kpiBridge.className = "kpi-val accent-red";
     }
 
-    document.getElementById("kpi-ksud").textContent = "ksud: " + (sys.KSUD || "active");
+    document.getElementById("kpi-ksud").textContent = "ksud: " + (sys.KSUD || "offline");
     const knoxBit = (sys.KNOX === "0" || !sys.KNOX) ? "0x0" : sys.KNOX;
     document.getElementById("kpi-knox").textContent = knoxBit;
-    document.getElementById("kpi-selinux").textContent = sys.SELINUX || "Enforcing";
-    document.getElementById("kpi-mounts").textContent = sys.BINDCOUNT || "0";
+    document.getElementById("kpi-selinux").textContent = sys.SELINUX || "--";
+    document.getElementById("kpi-mounts").textContent = sys.BINDCOUNT || String(state.activeMounts.length);
     document.getElementById("kpi-metamod").textContent = "link: " + (sys.METAMOD || "None");
 
     document.getElementById("sys-device").textContent = sys.MODEL || "--";
@@ -534,30 +594,107 @@ done
     document.getElementById("sys-symlink").textContent = sys.METAMOD || "--";
     document.getElementById("sys-zygisk").textContent = detectZygiskProvider(state.modules, state.adbDirs);
 
+    const dirMirrorsEl = document.getElementById("sys-dir-mirrors");
+    if (dirMirrorsEl) dirMirrorsEl.textContent = sys.MIRRORCOUNT || "0";
+
     let guardLabel = state.config.BOOTLOOP_GUARD === "0"
       ? "Disabled"
       : ("Armed (" + state.bootFailCount + "/2 fails)");
     if (sys.SAFEMODE === "1") guardLabel = "Safe Mode Bypass Active";
     else if (state.guardBypassed) guardLabel = "Bypassed (" + state.bootFailCount + " fails) — Reset Needed";
-    document.getElementById("sys-guard").textContent = guardLabel;
+    document.getElementById("sys-guard").textContent = state.bridgeOnline ? guardLabel : "--";
 
     const guardBanner = document.getElementById("bootloop-banner");
-    guardBanner.style.display = state.guardBypassed ? "flex" : "none";
+    guardBanner.style.display = state.bridgeOnline && state.guardBypassed ? "flex" : "none";
 
     const syncBtn = document.getElementById("btn-sync-updates");
     const banner = document.getElementById("pending-banner");
-    if (state.pendingUpdates) {
-      syncBtn.style.display = "inline-block";
+    if (state.bridgeOnline && state.pendingUpdates) {
+      syncBtn.style.display = "inline-flex";
       banner.style.display = "flex";
     } else {
       syncBtn.style.display = "none";
       banner.style.display = "none";
     }
+
+    const unmountBtn = document.getElementById("btn-emergency-unmount");
+    if (unmountBtn) {
+      unmountBtn.disabled = !state.bridgeOnline;
+    }
+    const runBtn = document.getElementById("btn-run-metamount");
+    if (runBtn) {
+      runBtn.disabled = !state.bridgeOnline;
+    }
+  }
+
+  function renderActiveMounts() {
+    const listEl = document.getElementById("active-mounts-list");
+    const pillEl = document.getElementById("active-mounts-pill");
+    const srcBadge = document.getElementById("ledger-source-badge");
+    const searchWrap = document.getElementById("mount-search-wrap");
+    if (!listEl) return;
+
+    const total = state.activeMounts.length;
+    if (pillEl) pillEl.textContent = total + " active";
+    if (srcBadge) {
+      srcBadge.textContent = state.ledgerSource && state.ledgerSource !== "none"
+        ? state.ledgerSource
+        : "ledger: idle";
+    }
+
+    if (!state.bridgeOnline) {
+      if (searchWrap) searchWrap.style.display = "none";
+      listEl.innerHTML = `<div class="empty-state">Connect KSU root bridge to inspect <code>/dev/unimount_active_mounts</code>.</div>`;
+      return;
+    }
+
+    if (searchWrap) {
+      searchWrap.style.display = total > 4 ? "block" : "none";
+    }
+
+    if (total === 0) {
+      listEl.innerHTML = `<div class="empty-state">No active mounts recorded in <code>/dev/unimount_active_mounts</code> for this boot.</div>`;
+      return;
+    }
+
+    const q = state.mountSearch.toLowerCase();
+    const filtered = q
+      ? state.activeMounts.filter((item) =>
+          (item.modsRaw + " " + item.dst + " " + item.type + " " + item.src).toLowerCase().includes(q)
+        )
+      : state.activeMounts;
+
+    if (filtered.length === 0) {
+      listEl.innerHTML = `<div class="empty-state">No active mounts match "${escapeHtml(state.mountSearch)}".</div>`;
+      return;
+    }
+
+    listEl.innerHTML = filtered.map((item) => {
+      const isMirror = item.type === "DIR_MIRROR";
+      const typeClass = isMirror ? "indigo" : "blue";
+      const modBadges = item.mods.map((m) => `<span class="badge green">${escapeHtml(m)}</span>`).join("");
+      return `
+        <div class="mount-row">
+          <div class="mount-row-head">
+            <div class="badge-row" style="margin-bottom:0;">
+              <span class="badge ${typeClass}">${escapeHtml(item.type)}</span>
+              ${modBadges}
+            </div>
+          </div>
+          <div class="mount-target">${escapeHtml(item.dst)}</div>
+          ${item.src ? `<div class="mount-source">&larr; ${escapeHtml(item.src)}</div>` : ""}
+        </div>
+      `;
+    }).join("");
   }
 
   function updateConfigUI() {
     document.getElementById("cfg-manual-mode").checked = state.config.MOUNT_MODE === "manual";
     document.getElementById("cfg-selinux-mirror").checked = state.config.SELINUX_MIRROR !== "0";
+    const dirMirrorEl = document.getElementById("cfg-dir-mirror");
+    if (dirMirrorEl) dirMirrorEl.checked = state.config.DIR_MIRROR_INJECT !== "0";
+    const skipZygiskEl = document.getElementById("cfg-skip-zygisk");
+    if (skipZygiskEl) skipZygiskEl.checked = state.config.SKIP_ZYGISK_ONLY !== "0";
     document.getElementById("cfg-bootloop-guard").checked = state.config.BOOTLOOP_GUARD !== "0";
     document.getElementById("cfg-protect-critical").checked = state.config.PROTECT_CRITICAL_PATHS !== "0";
     document.getElementById("cfg-log-verbose").checked = state.config.LOG_VERBOSE !== "0";
@@ -571,7 +708,7 @@ done
     if (!state.bridgeOnline) {
       listEl.innerHTML = `<div class="empty-state">
         <strong>KernelSU JavaScript Bridge Not Detected</strong><br/>
-        Open this page directly inside KernelSU-Next Manager &rarr; Modules &rarr; UniMount &rarr; WebUI.<br/>
+        Open this page directly inside KernelSU / KernelSU-Next Manager &rarr; Modules &rarr; UniMount &rarr; WebUI.<br/>
         (Zero fake/mock modules are rendered when root bridge is offline.)
       </div>`;
       return;
@@ -605,11 +742,15 @@ done
       } else if (hasOverlay) {
         badges.push(`<span class="badge blue">Overlays: ${escapeHtml(m.overlays.join(", "))}</span>`);
       } else {
-        badges.push(`<span class="badge">Zygisk / Service-Only (No /system overlay)</span>`);
+        badges.push(`<span class="badge">Zygisk / Service-Only</span>`);
       }
 
       if (m.mounted) {
-        badges.push(`<span class="badge green">Mounted (SELinux Mirrored)</span>`);
+        const details = [];
+        if (m.mountMirrors > 0) details.push(m.mountMirrors + " mirror" + (m.mountMirrors > 1 ? "s" : ""));
+        if (m.mountBinds > 0) details.push(m.mountBinds + " bind" + (m.mountBinds > 1 ? "s" : ""));
+        const suffix = details.length > 0 ? " · " + details.join(", ") : " (SELinux Mirrored)";
+        badges.push(`<span class="badge green">Mounted${escapeHtml(suffix)}</span>`);
       }
       if (m.isUpdatePending) {
         badges.push(`<span class="badge amber">Pending in modules_update</span>`);
@@ -618,10 +759,10 @@ done
         badges.push(`<span class="badge red">Disabled</span>`);
       }
       if (m.skipUnimount || m.skipMount) {
-        badges.push(`<span class="badge amber">Excluded (skip_unimount)</span>`);
+        badges.push(`<span class="badge amber">Excluded</span>`);
       }
       if (m.isOrphanCandidate) {
-        badges.push(`<span class="badge red">Orphan Candidate (No Matching Module)</span>`);
+        badges.push(`<span class="badge red">Orphan Candidate</span>`);
       }
 
       const canDelete = m.sourceType === "standalone" && m.isOrphanCandidate && isSafeOrphanDirName(m.id);
@@ -629,21 +770,21 @@ done
         <div class="mod-controls">
           <label class="toggle-item">
             <span>Manual Whitelist</span>
-            <span class="switch">
+            <span class="switch switch-sm">
               <input type="checkbox" data-action="whitelist" data-id="${escapeAttr(m.id)}" ${m.whitelisted ? "checked" : ""} />
               <span class="slider"></span>
             </span>
           </label>
           <label class="toggle-item">
             <span>skip_unimount</span>
-            <span class="switch">
+            <span class="switch switch-sm">
               <input type="checkbox" data-action="skip_unimount" data-id="${escapeAttr(m.id)}" data-path="${escapeAttr(m.path)}" ${m.skipUnimount ? "checked" : ""} />
               <span class="slider"></span>
             </span>
           </label>
           <label class="toggle-item">
             <span>skip_mount</span>
-            <span class="switch">
+            <span class="switch switch-sm">
               <input type="checkbox" data-action="skip_mount" data-id="${escapeAttr(m.id)}" data-path="${escapeAttr(m.path)}" ${m.skipMount ? "checked" : ""} />
               <span class="slider"></span>
             </span>
@@ -652,7 +793,7 @@ done
       ` : `
         <div class="mod-controls">
           <span class="subtitle">Located at <code>${escapeHtml(m.path)}</code></span>
-          ${canDelete ? `<button class="btn-danger-sm" data-delete-dir="${escapeAttr(m.id)}">Remove /data/adb/${escapeHtml(m.id)}</button>` : ""}
+          ${canDelete ? `<button type="button" class="m3-btn m3-btn-error-tonal m3-btn-sm" data-delete-dir="${escapeAttr(m.id)}">Remove /data/adb/${escapeHtml(m.id)}</button>` : ""}
         </div>
       `;
 
@@ -695,9 +836,9 @@ done
 
       let rightControl = `<span class="badge green">Active</span>`;
       if (isCore) {
-        rightControl = `<span class="badge blue">System Core</span>`;
+        rightControl = `<span class="badge indigo">System Core</span>`;
       } else if (canDelete) {
-        rightControl = `<button class="btn-danger-sm" data-delete-dir="${escapeAttr(d.name)}">Remove Folder</button>`;
+        rightControl = `<button type="button" class="m3-btn m3-btn-error-tonal m3-btn-sm" data-delete-dir="${escapeAttr(d.name)}">Remove Folder</button>`;
       }
 
       return `
@@ -719,35 +860,76 @@ done
       parseScanOutput(res.stdout);
     } else {
       state.bridgeOnline = false;
+      state.activeMounts = [];
+      state.ledgerSource = "none";
       updateDashboardUI({});
       renderModules();
+      renderActiveMounts();
       renderHygiene();
     }
   }
 
-  async function loadLogs(procMountsOnly) {
+  async function loadLogs(viewMode) {
+    const mode = viewMode || state.logView || "mountlog";
+    state.logView = mode;
     const logEl = document.getElementById("log-output");
-    if (procMountsOnly) {
-      const res = await ksuExec("grep -E 'adb|overlay|ksu|system|vendor|prism' /proc/mounts 2>/dev/null || cat /proc/mounts");
+    if (!logEl) return;
+
+    if (!state.bridgeOnline) {
+      logEl.textContent = "KernelSU root bridge offline. Open UniMount WebUI inside KernelSU Manager to inspect live logs.";
+      return;
+    }
+
+    if (mode === "procmounts") {
+      const res = await ksuExec("grep -E 'adb|overlay|ksu|unimount|system|vendor|prism' /proc/mounts 2>/dev/null || cat /proc/mounts");
       logEl.textContent = res.stdout || "No matching mount entries found.";
+    } else if (mode === "ledger") {
+      const res = await ksuExec("if [ -s /dev/unimount_active_mounts ]; then echo '# Source: /dev/unimount_active_mounts'; cat /dev/unimount_active_mounts; elif [ -s /data/adb/unimount/active_mounts.list ]; then echo '# Source: /data/adb/unimount/active_mounts.list'; cat /data/adb/unimount/active_mounts.list; else echo 'Active mount ledger is empty (0 mounts active).'; fi");
+      logEl.textContent = res.stdout || "Active mount ledger is empty.";
     } else {
       const res = await ksuExec("cat /data/adb/unimount/mount.log 2>/dev/null || echo 'mount.log is empty. Tap [Run metamount.sh Now] on Telemetry tab to populate.'");
-      logEl.textContent = res.stdout;
+      logEl.textContent = res.stdout || "mount.log is empty.";
     }
   }
 
   async function saveConfig() {
     const mode = document.getElementById("cfg-manual-mode").checked ? "manual" : "auto";
     const selinux = document.getElementById("cfg-selinux-mirror").checked ? "1" : "0";
-    const skipZygisk = state.config.SKIP_ZYGISK_ONLY === "0" ? "0" : "1";
+    const dirMirrorEl = document.getElementById("cfg-dir-mirror");
+    const dirMirror = (!dirMirrorEl || dirMirrorEl.checked) ? "1" : "0";
+    const skipZygiskEl = document.getElementById("cfg-skip-zygisk");
+    const skipZygisk = (!skipZygiskEl || skipZygiskEl.checked) ? "1" : "0";
     const verbose = document.getElementById("cfg-log-verbose").checked ? "1" : "0";
     const guard = document.getElementById("cfg-bootloop-guard").checked ? "1" : "0";
     const critical = document.getElementById("cfg-protect-critical").checked ? "1" : "0";
 
-    const cmd = `mkdir -p /data/adb/unimount && printf "MOUNT_MODE=${mode}\nSELINUX_MIRROR=${selinux}\nSKIP_ZYGISK_ONLY=${skipZygisk}\nLOG_VERBOSE=${verbose}\nBOOTLOOP_GUARD=${guard}\nPROTECT_CRITICAL_PATHS=${critical}\n" > /data/adb/unimount/config.conf`;
+    const cmd = `mkdir -p /data/adb/unimount && printf "MOUNT_MODE=${mode}\nSELINUX_MIRROR=${selinux}\nDIR_MIRROR_INJECT=${dirMirror}\nSKIP_ZYGISK_ONLY=${skipZygisk}\nLOG_VERBOSE=${verbose}\nBOOTLOOP_GUARD=${guard}\nPROTECT_CRITICAL_PATHS=${critical}\n" > /data/adb/unimount/config.conf`;
     await ksuExec(cmd);
     showToast("Saved /data/adb/unimount/config.conf");
     await refreshAll();
+  }
+
+  async function copyText(text) {
+    if (!text) return false;
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (e) {}
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch (e) {
+      return false;
+    }
   }
 
   function escapeHtml(str) {
@@ -769,12 +951,17 @@ done
     // Tab Switching
     document.querySelectorAll(".nav-tab").forEach((btn) => {
       btn.addEventListener("click", () => {
-        document.querySelectorAll(".nav-tab").forEach((b) => b.classList.remove("active"));
+        document.querySelectorAll(".nav-tab").forEach((b) => {
+          b.classList.remove("active");
+          b.setAttribute("aria-selected", "false");
+        });
         document.querySelectorAll(".tab-panel").forEach((p) => p.classList.remove("active"));
         btn.classList.add("active");
+        btn.setAttribute("aria-selected", "true");
         const target = btn.getAttribute("data-tab");
-        document.getElementById("panel-" + target).classList.add("active");
-        if (target === "logs") loadLogs(false);
+        const panel = document.getElementById("panel-" + target);
+        if (panel) panel.classList.add("active");
+        if (target === "logs") loadLogs(state.logView);
       });
     });
 
@@ -788,11 +975,34 @@ done
       });
     });
 
-    // Search Input
-    document.getElementById("module-search").addEventListener("input", (e) => {
-      state.search = e.target.value.trim();
-      renderModules();
-    });
+    // Search Input + Clear Button
+    const searchInput = document.getElementById("module-search");
+    const clearSearchBtn = document.getElementById("btn-clear-search");
+    if (searchInput) {
+      searchInput.addEventListener("input", (e) => {
+        state.search = e.target.value.trim();
+        if (clearSearchBtn) clearSearchBtn.classList.toggle("visible", state.search.length > 0);
+        renderModules();
+      });
+    }
+    if (clearSearchBtn && searchInput) {
+      clearSearchBtn.addEventListener("click", () => {
+        searchInput.value = "";
+        state.search = "";
+        clearSearchBtn.classList.remove("visible");
+        renderModules();
+        searchInput.focus();
+      });
+    }
+
+    // Active Mounts Search Filter
+    const mountSearchInput = document.getElementById("mount-search");
+    if (mountSearchInput) {
+      mountSearchInput.addEventListener("input", (e) => {
+        state.mountSearch = e.target.value.trim();
+        renderActiveMounts();
+      });
+    }
 
     // Rescan Button
     document.getElementById("btn-refresh").addEventListener("click", async () => {
@@ -818,7 +1028,7 @@ done
           mv "$d" "/data/adb/modules/$id"
         done
       `;
-      await ksuExec(cmd);
+      await ksuExec(cmd, 15000);
       showToast("Merged modules_update into /data/adb/modules");
       await refreshAll();
     };
@@ -828,14 +1038,74 @@ done
     // Run metamount.sh immediately
     document.getElementById("btn-run-metamount").addEventListener("click", async () => {
       showToast("Executing metamount.sh...");
-      await ksuExec("sh /data/adb/modules/unimount/metamount.sh 2>&1 || sh /data/adb/metamodule/metamount.sh 2>&1");
+      await ksuExec("sh /data/adb/modules/unimount/metamount.sh 2>&1 || sh /data/adb/metamodule/metamount.sh 2>&1", 20000);
       showToast("metamount.sh completed");
       await refreshAll();
     });
 
-    // Config switches
-    ["cfg-manual-mode", "cfg-selinux-mirror", "cfg-bootloop-guard", "cfg-protect-critical", "cfg-log-verbose"].forEach((id) => {
-      document.getElementById(id).addEventListener("change", saveConfig);
+    // Emergency Unmount All (Native Material 3 <dialog> Confirmation)
+    const unmountDialog = document.getElementById("unmount-dialog");
+    const unmountDesc = document.getElementById("unmount-dialog-desc");
+    const openUnmountBtn = document.getElementById("btn-emergency-unmount");
+    const cancelUnmountBtn = document.getElementById("btn-cancel-unmount");
+    const confirmUnmountBtn = document.getElementById("btn-confirm-unmount");
+
+    const runEmergencyUnmount = async () => {
+      showToast("Detaching all UniMount overlays...");
+      const res = await ksuExec(
+        "sh /data/adb/modules/unimount/metamount.sh --unmount-all 2>&1 || sh /data/adb/metamodule/metamount.sh --unmount-all 2>&1",
+        15000
+      );
+      const summary = (res.stdout || "").trim().split(/\r?\n/).pop();
+      showToast(summary || "Emergency unmount completed");
+      await refreshAll();
+      if (state.logView === "ledger" || state.logView === "mountlog") {
+        loadLogs(state.logView);
+      }
+    };
+
+    if (openUnmountBtn) {
+      openUnmountBtn.addEventListener("click", () => {
+        const mirrors = state.activeMounts.filter((m) => m.type === "DIR_MIRROR").length;
+        const binds = state.activeMounts.length - mirrors;
+        if (unmountDesc) {
+          unmountDesc.innerHTML =
+            `Detach <strong>${binds}</strong> file bind(s) and <strong>${mirrors}</strong> directory mirror(s) currently tracked in <code>/dev/unimount_active_mounts</code> without rebooting. Standalone non-UniMount daemons are not touched.`;
+        }
+        if (unmountDialog && typeof unmountDialog.showModal === "function") {
+          unmountDialog.showModal();
+        } else {
+          runEmergencyUnmount();
+        }
+      });
+    }
+    if (cancelUnmountBtn && unmountDialog) {
+      cancelUnmountBtn.addEventListener("click", () => unmountDialog.close());
+    }
+    if (confirmUnmountBtn) {
+      confirmUnmountBtn.addEventListener("click", async () => {
+        if (unmountDialog && unmountDialog.open) unmountDialog.close();
+        await runEmergencyUnmount();
+      });
+    }
+    if (unmountDialog) {
+      unmountDialog.addEventListener("click", (e) => {
+        if (e.target === unmountDialog) unmountDialog.close();
+      });
+    }
+
+    // Config switches (all 7 config.conf policy flags)
+    [
+      "cfg-manual-mode",
+      "cfg-selinux-mirror",
+      "cfg-dir-mirror",
+      "cfg-skip-zygisk",
+      "cfg-bootloop-guard",
+      "cfg-protect-critical",
+      "cfg-log-verbose"
+    ].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener("change", saveConfig);
     });
 
     // Delegated clicks for Module Toggles (with strict ID & path validation)
@@ -916,11 +1186,30 @@ done
       await refreshAll();
     });
 
-    // Log buttons
-    document.getElementById("btn-proc-mounts").addEventListener("click", () => loadLogs(true));
+    // Log segmented tabs & action buttons
+    document.querySelectorAll("#log-view-tabs .seg-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll("#log-view-tabs .seg-btn").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        loadLogs(btn.getAttribute("data-log-view"));
+      });
+    });
+
+    const copyLogBtn = document.getElementById("btn-copy-log");
+    if (copyLogBtn) {
+      copyLogBtn.addEventListener("click", async () => {
+        const logEl = document.getElementById("log-output");
+        const ok = await copyText(logEl ? logEl.textContent : "");
+        showToast(ok ? "Copied telemetry to clipboard" : "Copy unavailable in this WebView");
+      });
+    }
+
     document.getElementById("btn-clear-log").addEventListener("click", async () => {
       await ksuExec("echo '=== Log Cleared ===' > /data/adb/unimount/mount.log");
-      loadLogs(false);
+      document.querySelectorAll("#log-view-tabs .seg-btn").forEach((b) => {
+        b.classList.toggle("active", b.getAttribute("data-log-view") === "mountlog");
+      });
+      loadLogs("mountlog");
     });
 
     await refreshAll();
